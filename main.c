@@ -1,7 +1,9 @@
 #include <curses.h>
 #include <stdlib.h>
+#include <time.h>
 
-#define FRAMETIME 240
+
+#define FRAMETIME 100
 
 
 // structs
@@ -53,11 +55,17 @@ snake *create_snake          (int y, int x, int dy, int dx);
 void   update_snake          (game g);
 void   draw_snake            (game g);
 void   grow_snake            (snake *s);
+void   clear_snake_trail     (game g);
 void   destroy_snake         (snake *s);
-void   control_snake            (int key, snake *s);
+void   control_snake         (int key, snake *s);
 
 void   update_cell_positions (snake *s);
 void   update_cell_vectors   (snake *s);
+
+// item
+item  *create_item           ();
+void   draw_item             (game g);
+void   move_item             (game g);
 
 
 // main
@@ -84,6 +92,13 @@ int main () {
 	nodelay(arena.win, TRUE);
 
 	game.snake = create_snake(10, 10, 0, 1);
+	
+	// init random number generator
+	time_t t;
+	srand((unsigned) time(&t));
+
+	game.item = create_item();
+	move_item(game);
 
 	loop(game);
 
@@ -93,7 +108,7 @@ int main () {
 	// cleanup
 	endwin();
 	destroy_snake(game.snake);
-	
+	free(game.item);
 
 	return 0;
 }
@@ -109,12 +124,18 @@ int loop (game game) {
 
 
 		// update
+		clear_snake_trail(game);
 		update_snake(game);
 
 		// draw
-		wclear(game.arena.win);
+
 		box(game.arena.win, 0, 0);
+
+		draw_item(game);
+
 		draw_snake(game);
+
+
 		wrefresh(game.arena.win);
 
 		// sleep
@@ -207,9 +228,11 @@ void update_snake (game g) {
 	if ((mvwinch(g.arena.win, g.snake->head->y, g.snake->head->x) & A_CHARTEXT) == g.snake->c)
 		g.snake->alive = 0;
 
-	// hardcode grow
-	if (g.snake->length < 20)
+	// hit detection - item
+	if ((mvwinch(g.arena.win, g.snake->head->y, g.snake->head->x) & A_CHARTEXT) == g.item->c) {
 		grow_snake(g.snake);
+		move_item(g);
+	}
 }
 
 void draw_snake (game g) {
@@ -264,6 +287,10 @@ void grow_snake (snake *s) {
 	s->length++;
 }
 
+void clear_snake_trail (game g) {
+	mvwaddch(g.arena.win, g.snake->tail->y, g.snake->tail->x, ' ');
+}
+
 void destroy_snake (snake *s) {
 	cell *tmp = s->head;
 
@@ -274,4 +301,26 @@ void destroy_snake (snake *s) {
 
 	free(tmp);
 	free(s);
+}
+
+
+// item
+item *create_item () {
+	item *i = malloc(sizeof(item));
+	i->x = 4;
+	i->y = 4;
+	i->c = '*';
+
+	return i;
+}
+
+void draw_item (game g) {
+	mvwaddch(g.arena.win, g.item->y, g.item->x, g.item->c);
+}
+
+// TODO: don't put new item under snake
+// POSSIBLE BUG if item spawns under snake, it get's cleared by clear_snake_trail
+void move_item (game g) {
+	g.item->y = 1 + (rand() % (g.arena.h - 2));
+	g.item->x = 1 + (rand() % (g.arena.w - 2));
 }
