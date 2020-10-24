@@ -1,7 +1,7 @@
 #include <curses.h>
 #include <stdlib.h>
 
-#define FRAMETIME 120
+#define FRAMETIME 240
 
 
 // structs
@@ -21,6 +21,7 @@ typedef struct snake {
 	int alive;
 	cell *head;
 	cell *tail;
+	char c;
 } snake;
 
 typedef struct item {
@@ -29,24 +30,111 @@ typedef struct item {
 	char c;
 } item;
 
+typedef struct arena {
+	WINDOW *win;
+	int h;
+	int w;
+} arena;
+
 typedef struct game {
-	snake snake;
-	item item;
-	WINDOW *arena;
+	snake *snake;
+	item *item;
+	arena arena;
 } game;
 
 
-// function definitions
 
-void grow (snake *s);
-void destroy (snake s);
+// function definitions
+int    ncurses_setup         ();
+int    loop                  (game game);
+
+// snake
+snake *create_snake          (int y, int x, int dy, int dx);
+void   update_snake          (game g);
+void   draw_snake            (game g);
+void   grow_snake            (snake *s);
+void   destroy_snake         (snake *s);
+void   control_snake            (int key, snake *s);
+
+void   update_cell_positions (snake *s);
+void   update_cell_vectors   (snake *s);
 
 
 // main
 
 int main () {
+	if ( ncurses_setup() != 0 )
+		return -1;
+
+	// init game
+	game game;
+
+	arena arena;
+	arena.w = 40;
+	arena.h = 20;
+	arena.win = newwin(arena.h, arena.w, 2, 4);
+
+
+	game.arena = arena;
+	box(arena.win, 0, 0);
+	refresh();
+	wrefresh(arena.win);
+
+	keypad(arena.win, TRUE);
+	nodelay(arena.win, TRUE);
+
+	game.snake = create_snake(10, 10, 0, 1);
+
+	loop(game);
+
+	nodelay(stdscr, FALSE);
+	getch();
+	
+	// cleanup
+	endwin();
+	destroy_snake(game.snake);
+	
+
+	return 0;
+}
+
+// game loop
+int loop (game game) {
+	int key;
+
+	while (game.snake->alive) {
+		// listen for key press
+		key = wgetch(game.arena.win);
+		control_snake(key, game.snake);
+
+
+		// update
+		update_snake(game);
+
+		// draw
+		wclear(game.arena.win);
+		box(game.arena.win, 0, 0);
+		draw_snake(game);
+		wrefresh(game.arena.win);
+
+		// sleep
+		napms(FRAMETIME);
+	}
+
+	return 0;
+}
+
+// function implementations
+
+int ncurses_setup () {
 	// init ncurses
 	initscr();
+
+	if (has_colors() == FALSE) {
+		endwin();
+		printf("Your terminal doesn't support colors!\n");
+		return -1;
+	}
 
 	cbreak();
 	noecho();
@@ -54,129 +142,111 @@ int main () {
 
 	refresh();
 
-	// init game
-	game game;
+	return 0;
+}
 
-	keypad(stdscr, TRUE);
-	nodelay(stdscr, TRUE);
-
+snake *create_snake (int y, int x, int dy, int dx) {
 	cell *head = malloc(sizeof(cell));
-	head->y  = 30;
-	head->x  = 30;
-	head->dy = 0;
-	head->dx = 1;
+	head->y  = y;
+	head->x  = x;
+	head->dy = dy;
+	head->dx = dx;
 	head->next = NULL;
 	head->prev = NULL;
 
-	snake s;
-	s.length = 1;
-	s.alive = 1;
-	s.head = head;
-	s.tail = s.head;
+	snake *s = malloc(sizeof(snake));
+	s->length = 1;
+	s->alive = 1;
+	s->head = head;
+	s->tail = s->head;
 
-	game.snake = s;
-	
+	s->c = '+';
 
-	int key;
-	cell *tmp;
+	return s;
+}
 
-	// game loop
-	while (s.alive) {
-		// listen for key press
-		key = getch();
-		switch (key) {
-			case KEY_UP:
-				s.head->dy = -1;
-				s.head->dx = 0;
-				break;
-			case KEY_DOWN:
-				s.head->dy = 1;
-				s.head->dx = 0;
-				break;
-			case KEY_LEFT:
-				s.head->dy = 0;
-				s.head->dx = -1;
-				break;
-			case KEY_RIGHT:
-				s.head->dy = 0;
-				s.head->dx = 1;
-				break;
-		}
+void update_cell_positions (snake *s) {
+		cell *tmp;
 
-		// update cell positions
-		tmp = s.head;
+		tmp = s->head;
 		while (tmp != NULL) {
 			tmp->y += tmp->dy;
 			tmp->x += tmp->dx;
 
 			tmp = tmp->next;
 		}
+}
 
-		// update vectors
-		tmp = s.tail;
+void update_cell_vectors (snake *s) {
+		cell *tmp;
+
+		tmp = s->tail;
 		while (tmp != NULL && tmp->prev != NULL) {
 			tmp->dy = tmp->prev->dy;
 			tmp->dx = tmp->prev->dx;
 
 			tmp = tmp->prev;
 		}
+}
 
-		// hit detection - bounds
-		/*if (s.head->y < 0 || s.head->y > getmaxy(stdscr) ||
-			s.head->x < 0 || s.head->x > getmaxx(stdscr))
-			break; */
+void update_snake (game g) {
+	// update cell positions
+	update_cell_positions(g.snake);
 
-		// walk through walls
-		if (s.head->y < 0)
-			s.head->y = getmaxy(stdscr);
-		if (s.head->y > getmaxy(stdscr))
-			s.head->y = 0;
-		if (s.head->x < 0)
-			s.head->x = getmaxx(stdscr);
-		if (s.head->x > getmaxx(stdscr))
-			s.head->x = 0;
-		
-		// hit detection - snake
-		if ((mvinch(s.head->y, s.head->x) & A_CHARTEXT) == '#')
-			break;
+	// update vectors
+	update_cell_vectors(g.snake);
 
-		// hardcode end
-		if (s.length < 10)
-			grow(&s);
-		else
-			break;
+	// hit detection - wall
+	if (g.snake->head->y <= 0 ||
+		g.snake->head->y >= getmaxy(g.arena.win) - 1 ||
+		g.snake->head->x <= 0 ||
+		g.snake->head->x >= getmaxx(g.arena.win) - 1)
+		g.snake->alive = 0;
+	
+	// hit detection - snake
+	if ((mvwinch(g.arena.win, g.snake->head->y, g.snake->head->x) & A_CHARTEXT) == g.snake->c)
+		g.snake->alive = 0;
 
-		// clear screen
-		clear();
+	// hardcode grow
+	if (g.snake->length < 20)
+		grow_snake(g.snake);
+}
 
-		// draw
-		tmp = s.head;
+void draw_snake (game g) {
+		cell *tmp = g.snake->head;
+
+		wattron(g.arena.win, A_REVERSE);
 
 		while (tmp != NULL) {
-			mvaddch(tmp->y, tmp->x, '#');
+			mvwaddch(g.arena.win, tmp->y, tmp->x, g.snake->c);
 			tmp = tmp->next;
 		}
 
-		refresh();
-
-		// sleep
-		napms(FRAMETIME);
-	}
-
-	nodelay(stdscr, FALSE);
-	getch();
-	
-	// cleanup
-	endwin();
-	destroy(s);
-	
-
-	return 0;
+		wattroff(g.arena.win, A_REVERSE);
 }
 
-// function implementations
+void control_snake(int key, snake *s) {
+		switch (key) {
+			case KEY_UP:
+				s->head->dy = -1;
+				s->head->dx = 0;
+				break;
+			case KEY_DOWN:
+				s->head->dy = 1;
+				s->head->dx = 0;
+				break;
+			case KEY_LEFT:
+				s->head->dy = 0;
+				s->head->dx = -1;
+				break;
+			case KEY_RIGHT:
+				s->head->dy = 0;
+				s->head->dx = 1;
+				break;
+		}
+}
 
-void grow (snake *s) {
+void grow_snake (snake *s) {
 	cell *new = malloc(sizeof(cell));
 	
 	new->y = s->tail->y - s->tail->dy;
@@ -194,8 +264,8 @@ void grow (snake *s) {
 	s->length++;
 }
 
-void destroy (snake s) {
-	cell *tmp = s.head;
+void destroy_snake (snake *s) {
+	cell *tmp = s->head;
 
 	while (tmp->next != NULL) {
 		tmp = tmp->next;
@@ -203,4 +273,5 @@ void destroy (snake s) {
 	}
 
 	free(tmp);
+	free(s);
 }
